@@ -44,6 +44,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx := newContext(tr, config)
 
-	go ctx.writeLoop()
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ctx.writeLoop()
+	}()
+
 	ctx.readLoop()
 }

@@ -66,3 +66,27 @@ func (s *Server) Serve(ln net.Listener) error {
 func nextID() uint32 {
 	return atomic.AddUint32(&increaseID, 1)
 }
+
+func NewServer(opt ServerOption) *Server {
+	s := new(Server)
+	s.opt = opt
+	s.conns = make(map[uint32]Transport)
+	s.done = make(chan struct{})
+	s.isWebsocket = true
+	return s
+}
+
+func (s *Server) Close() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.serve {
+		return errors.New("server already closed")
+	}
+	s.serve = false
+	for _, t := range s.conns {
+		t.Close()
+	}
+	close(s.done)
+	s.wg.Wait()
+	return nil
+}

@@ -29,6 +29,8 @@ type Context struct {
 
 	afterRead func(ctx *Context, packet *Packet, n int)
 
+	packetListener map[Event]MsgHandler
+
 	readChannel chan *Packet
 
 	writeChannel chan *Packet
@@ -52,11 +54,14 @@ func newContext(transport Transport, config *ContextConfig) *Context {
 	ctx.createTime = time.Now().Unix()
 	ctx.readChannel = make(chan *Packet, config.readChannelSize)
 	ctx.writeChannel = make(chan *Packet, config.writeChannelSize)
+	ctx.done = make(chan struct{})
+	ctx.state = 0
+	ctx.packetListener = make(map[Event]MsgHandler)
 
 	return ctx
 }
 
-func (c *Context) sendPacket(packet *Packet) error {
+func (c *Context) write(packet *Packet) error {
 	select {
 	case <-c.done:
 		return errors.New("channel already been closed")
@@ -112,6 +117,44 @@ func (c *Context) writeLoop() {
 			}
 		}
 	}
+}
+
+func (c *Context) bWrite(packet *Packet) error {
+	var w = bufio.NewWriter(c.transport)
+	if c.writeBufferSize != 0 {
+		w = bufio.NewWriterSize(c.transport, c.writeBufferSize)
+	}
+	select {
+	case <-c.done:
+		return errors.New("channel is closed")
+	default:
+	}
+	if c.beforeWrite != nil && !c.beforeWrite(c, packet) {
+		return nil
+	}
+	data, err := c.codec.Marshal(packet)
+	if err != nil {
+		return err
+	}
+	n := len(data)
+	var header []byte
+	binary.BigEndian.PutUint16(header, uint16(n))
+	n, err = w.Write(header)
+	if err != nil {
+		return err
+	}
+	n, err = w.Write(data)
+	if err != nil {
+		return err
+	}
+	err = w.Flush()
+	if err != nil {
+		return err
+	}
+	if c.afterWrite != nil {
+		c.afterWrite(c, packet, n+2)
+	}
+	return nil
 }
 
 // readLoop
@@ -170,17 +213,15 @@ func (c *Context) readLoop() {
 }
 
 func (c *Context) closeChannel() error {
-	if atomic.CompareAndSwapUint32(&c.state, 1, 1) {
-		return errors.New("channel already been closed")
+	if atomic.CompareAndSwapUint32(&c.state, 0, 1) {
+		atomic.StoreUint32(&c.state, 1)
+
+		close(c.done)
+		close(c.writeChannel)
+		close(c.readChannel)
+		return c.transport.Close()
 	}
-	atomic.StoreUint32(&c.state, 1)
-
-	c.transport.Close()
-
-	close(c.done)
-	close(c.writeChannel)
-	close(c.readChannel)
-	return nil
+	return errors.New("channel already been closed")
 }
 
 func (c *Context) isClosed() bool {
@@ -284,9 +325,72 @@ func newContextSet() *contextSet {
 type ContextManager interface {
 	Bind(token string, ctx *Context) error
 	UnBind(token string, ctx *Context) error
-	SendByToken(ctx *Context, token string, packet *Packet) error
-	BSendByToken(ctx *Context, token string, packet *Packet) error
+	SendByToken(token string, packet *Packet) error
+	BSendByToken(token string, packet *Packet) error
 
 	SendToAll(packet *Packet) error
 	BSendToAll(packet *Packet) error
+}
+
+type groupContextManager struct {
+	set *contextSet
+}
+
+func (g *groupContextManager) Bind(token string, ctx *Context) error {
+	g.set.add(token, ctx)
+	return nil
+}
+
+func (g *groupContextManager) UnBind(token string, ctx *Context) error {
+	ok := g.set.removeContext(token, ctx)
+	if !ok {
+		return errors.New("token not exist")
+	}
+	return nil
+}
+
+func (g *groupContextManager) SendByToken(token string, packet *Packet) error {
+	ctxs, ok := g.set.get(token)
+	if !ok {
+		return errors.New("token not exist")
+	}
+	for _, v := range ctxs {
+		if err := v.write(packet); err != nil {
+			// TODO:: log.
+		}
+	}
+	return nil
+}
+
+func (g *groupContextManager) BSendByToken(token string, packet *Packet) error {
+	ctxs, ok := g.set.get(token)
+	if !ok {
+		return errors.New("token not exist")
+	}
+	for _, v := range ctxs {
+		if err := v.bWrite(packet); err != nil {
+			// TODO:: log.
+		}
+	}
+	return nil
+}
+
+func (g *groupContextManager) SendToAll(packet *Packet) error {
+	ctxs := g.set.all()
+	for _, v := range ctxs {
+		if err := v.write(packet); err != nil {
+			// TODO:: log.
+		}
+	}
+	return nil
+}
+
+func (g *groupContextManager) BSendToAll(packet *Packet) error {
+	ctxs := g.set.all()
+	for _, v := range ctxs {
+		if err := v.bWrite(packet); err != nil {
+			// TODO:: log.
+		}
+	}
+	return nil
 }
