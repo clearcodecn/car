@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/clearcodecn/cargo"
+	"github.com/clearcodecn/cargo/old"
 	"log"
 	"net"
 	"net/http"
@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	server := cargo.NewServer(cargo.ServerOption{
+	server := old.NewServer(old.ServerOption{
 		ConnectionIdleTimeout: 30 * time.Second,
 		Timeout:               30 * time.Second,
 		ReaderBufferSize:      1024,

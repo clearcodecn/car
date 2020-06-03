@@ -1,4 +1,4 @@
-package cargo
+package old
 
 import (
 	"bytes"
@@ -20,7 +20,7 @@ type Transport interface {
 	net.Conn
 }
 
-type MsgHandler func(*Context, *Packet) error
+type MsgHandler func(*Context, *Packet)
 
 type Packet struct {
 	body            *bytes.Buffer

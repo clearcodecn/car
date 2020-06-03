@@ -1,7 +1,6 @@
-package cargo
+package old
 
 import (
-	"net/http"
 	"time"
 )
 
@@ -37,6 +36,7 @@ func (s *Server) serveTCP() error {
 			}
 			return err
 		}
+		_ = rawConn
 		tempDelay = 0
 		// Start a new goroutine to deal with rawConn so we don't stall this Accept
 		// loop goroutine.
@@ -49,6 +49,7 @@ func (s *Server) serveTCP() error {
 		}()
 	}
 }
+
 //
 //func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 //	rw := &responseWriter{isSent: false, ResponseWriter: w}

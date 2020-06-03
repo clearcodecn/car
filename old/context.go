@@ -1,4 +1,4 @@
-package cargo
+package old
 
 import (
 	"bufio"
@@ -208,6 +208,22 @@ func (c *Context) readLoop() {
 		}
 		if c.afterRead != nil {
 			c.afterRead(c, packet, n+2)
+		}
+	}
+}
+
+func (c *Context) listenLoop() {
+	for {
+		select {
+		case <-c.done:
+			return
+		case packet, ok := <-c.readChannel:
+			if !ok {
+				return
+			}
+			if h, ok := c.packetListener[packet.Event]; ok {
+				h(c, packet)
+			}
 		}
 	}
 }

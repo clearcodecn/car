@@ -1,4 +1,4 @@
-package cargo
+package old
 
 import (
 	"net/http"
@@ -49,6 +49,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		defer s.wg.Done()
 		ctx.writeLoop()
 	}()
-
+	s.wg.Add(1)
+	go func() {
+		defer s.wg.Done()
+		ctx.listenLoop()
+	}()
 	ctx.readLoop()
 }

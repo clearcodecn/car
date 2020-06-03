@@ -1,4 +1,4 @@
-package cargo
+package old
 
 import (
 	"errors"
@@ -29,6 +29,8 @@ type Server struct {
 	isTcp bool
 
 	opt ServerOption
+
+	handlers map[Event]MsgHandler
 }
 
 func (s *Server) Serve(ln net.Listener) error {
