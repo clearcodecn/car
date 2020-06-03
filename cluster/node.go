@@ -19,7 +19,9 @@ type Node struct {
 
 	wg sync.WaitGroup
 
-	Handlers []HandlerFunc
+	globalHandlers []HandlerFunc
+
+	handlers map[Msg][]HandlerFunc
 }
 
 type responseWriter struct {
@@ -121,9 +123,11 @@ func (n *Node) handleConnection(conn net.Conn) {
 		writeChannelSize:  n.opt.WriteBufferSize,
 		AfterReadHandler:  []OnIOHandler{AfterRead},
 		AfterWriteHandler: []OnIOHandler{AfterWrite},
-		Handlers:          n.Handlers,
+		Handlers:          n.globalHandlers,
 	}
 	ctx := newContext(conn, config)
+	defer ctx.Close()
+
 	go ctx.loop()
 	ctx.readLoop()
 }
