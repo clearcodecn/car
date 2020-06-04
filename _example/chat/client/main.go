@@ -1,35 +1,46 @@
 package main
 
 import (
+	"fmt"
+	"github.com/clearcodecn/cargo/cluster"
+	"github.com/clearcodecn/cargo/packet"
+	"github.com/clearcodecn/cargo/proto"
+	"github.com/gorilla/websocket"
 	"log"
-	"net"
-	"os"
-	"os/signal"
 	"time"
 )
 
+var (
+	writeChan chan *packet.Packet
+)
+
 func main() {
-	ln, err := net.Listen("tcp", ":1111")
-	go func() {
-		if err != nil {
-			return
-		}
-		for {
-			_, err := ln.Accept()
-			if err != nil {
-				log.Print(1, err)
-				return
-			}
-
-		}
-	}()
-	ch := make(chan os.Signal, 1)
-	signal.Notify(ch, os.Interrupt, os.Kill)
-
-	<-ch
-	err = ln.Close()
+	d := websocket.Dialer{}
+	conn, _, err := d.Dial("ws://0.0.0.0:6300/ws", nil)
 	if err != nil {
-		log.Println(err)
+		log.Fatal(err)
 	}
-	time.Sleep(2 * time.Second)
+	cluster.RegisterHandle(1, func(ctx *cluster.Context, v *proto.Message) error {
+		fmt.Println("server1 -> ", string(v.Body))
+		return nil
+	})
+	cluster.RegisterHandle(2, func(ctx *cluster.Context, v *proto.Message) error {
+		fmt.Println("server2 -> ", string(v.Body))
+		ctx.WriteMessage(&proto.Message{
+			Type: 3,
+			Body: []byte("要"),
+		})
+		return nil
+	})
+
+	ctx := cluster.NewClientContext(conn)
+	ctx.WriteMessage(&proto.Message{
+		Type: 1,
+		Body: []byte("我是客户端"),
+	})
+	time.Sleep(1*time.Second)
+
+	ctx.Close()
+
+	time.Sleep(10 * time.Hour)
 }

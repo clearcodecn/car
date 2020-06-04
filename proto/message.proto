@@ -1,0 +1,12 @@
+syntax="proto3";
+
+option go_package = "proto";
+
+enum MsgType {
+  UnknownMsgType = 0 ;
+}
+
+message Message {
+  MsgType type = 1;
+  bytes body = 2;
+}

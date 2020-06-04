@@ -1,13 +1,19 @@
 package cluster
 
 import (
+	"bufio"
+	"context"
 	"crypto/tls"
 	"errors"
+	"github.com/clearcodecn/cargo/proto"
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 	"net"
 	"net/http"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"time"
 )
 
 type Node struct {
@@ -15,18 +21,27 @@ type Node struct {
 
 	opt ServerOptions
 
-	BeforeWebsocketConnect func(w http.ResponseWriter, r *http.Request)
-
 	wg sync.WaitGroup
 
-	globalHandlers []HandlerFunc
+	state uint32
+	done  chan struct{}
 
-	handlers map[Msg][]HandlerFunc
+	httpServer *http.Server
+
+	mu          sync.Mutex
+	connections map[uint32]*Context
+
+	groupManager *contextSet
+	ipManager    *contextSet
 }
 
 type responseWriter struct {
 	isSent bool
 	http.ResponseWriter
+}
+
+func (rw *responseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	return rw.ResponseWriter.(http.Hijacker).Hijack()
 }
 
 func (rw *responseWriter) Write(b []byte) (int, error) {
@@ -42,13 +57,14 @@ func (n *Node) startWebsocketServer() error {
 		EnableCompression: n.opt.EnableCompress,
 		HandshakeTimeout:  n.opt.Timeout,
 	}
-
-	path := "/" + strings.TrimPrefix(n.opt.WebsocketPath, "/")
-
+	var err error
+	var hostPort = net.JoinHostPort(n.opt.Host, n.opt.Port)
+	var httpServer = &http.Server{Addr: hostPort}
+	var path = "/" + strings.TrimPrefix(n.opt.WebsocketPath, "/")
 	http.HandleFunc(path, func(w http.ResponseWriter, r *http.Request) {
 		w = &responseWriter{ResponseWriter: w}
-		if n.BeforeWebsocketConnect != nil {
-			n.BeforeWebsocketConnect(w, r)
+		if n.opt.BeforeWebsocketConnect != nil {
+			n.opt.BeforeWebsocketConnect(w, r)
 		}
 		if w.(*responseWriter).isSent {
 			return
@@ -63,13 +79,14 @@ func (n *Node) startWebsocketServer() error {
 
 		n.handleConnection(netConn)
 	})
-	var err error
-	var hostPort = net.JoinHostPort(n.opt.Host, n.opt.Port)
+	n.httpServer = httpServer
 
 	if n.opt.Cert != "" && n.opt.Key != "" {
-		err = http.ListenAndServeTLS(hostPort, n.opt.Cert, n.opt.Key, nil)
+		nodeLogger.Debugf("websocket start at: wss://%s%s", hostPort, path)
+		err = httpServer.ListenAndServeTLS(n.opt.Cert, n.opt.Key)
 	} else {
-		err = http.ListenAndServe(hostPort, nil)
+		nodeLogger.Debugf("websocket start at: ws://%s%s", hostPort, path)
+		err = httpServer.ListenAndServe()
 	}
 	if err != nil {
 		if errors.Is(http.ErrServerClosed, err) {
@@ -118,16 +135,112 @@ func (n *Node) startTCPServer() error {
 func (n *Node) handleConnection(conn net.Conn) {
 	config := &ContextConfig{
 		readBufferSize:    n.opt.ReaderBufferSize,
-		writeBufferSize:   n.opt.WriteBufferSize,
-		readChannelSize:   n.opt.ReaderBufferSize,
+		writeBufferSize:   n.opt.WriteChannelSize,
+		readChannelSize:   n.opt.ReadChannelSize,
 		writeChannelSize:  n.opt.WriteBufferSize,
 		AfterReadHandler:  []OnIOHandler{AfterRead},
 		AfterWriteHandler: []OnIOHandler{AfterWrite},
-		Handlers:          n.globalHandlers,
+		codec:             n.opt.Codec,
 	}
-	ctx := newContext(conn, config)
+	ctx := newContext(conn, n, config)
 	defer ctx.Close()
 
 	go ctx.loop()
 	ctx.readLoop()
+}
+
+func (n *Node) HttpServer() *http.Server {
+	return n.httpServer
+}
+
+func NewNode(opt ServerOptions) *Node {
+	node := new(Node)
+	node.opt = opt
+	logrus.SetLevel(opt.LogLevel)
+	node.connections = make(map[uint32]*Context)
+	node.groupManager = newContextSet()
+	node.ipManager = newContextSet()
+	node.done = make(chan struct{})
+
+	return node
+}
+
+func (n *Node) Start() error {
+	n.wg.Add(1)
+	go func() {
+		defer n.wg.Done()
+		n.cleanLoop()
+	}()
+
+	var err error
+	if n.opt.IsWebsocket {
+		err = n.startWebsocketServer()
+	} else {
+		err = n.startTCPServer()
+	}
+
+	return err
+}
+
+func (n *Node) ShutDown() error {
+	if !atomic.CompareAndSwapUint32(&n.state, 0, 1) {
+		return errors.New("node already closed")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	n.httpServer.Shutdown(ctx)
+	close(n.done)
+
+	n.mu.Lock()
+	for _, conn := range n.connections {
+		conn.Close()
+	}
+	n.mu.Unlock()
+	n.wg.Wait()
+
+	return nil
+}
+
+func (n *Node) SendToAll(message *proto.Message) {
+	n.mu.Lock()
+	ctxs := n.connections
+	n.mu.Unlock()
+	for _, c := range ctxs {
+		if err := c.WriteMessage(message); err != nil {
+			nodeLogger.WithField("method", "SendToAll").WithError(err).Warnf("write message failed")
+		}
+	}
+}
+
+func (n *Node) SendByID(id string, message *proto.Message) error {
+	var ctx *Context
+	n.mu.Lock()
+	for _, c := range n.connections {
+		if c.id == id {
+			ctx = c
+		}
+	}
+	n.mu.Unlock()
+	if ctx == nil {
+		return errors.New("id not found")
+	}
+	return ctx.WriteMessage(message)
+}
+
+func (n *Node) AddToGroup(group string, ctx *Context) {
+	n.groupManager.add(group, ctx)
+}
+
+func (n *Node) cleanLoop() {
+	tk := time.NewTicker(n.opt.CleanDuration)
+	defer tk.Stop()
+
+	for {
+		select {
+		case <-n.done:
+		case <-tk.C:
+			n.ipManager.cleanClosed()
+			n.groupManager.cleanClosed()
+		}
+	}
 }

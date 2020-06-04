@@ -2,10 +2,12 @@ package cluster
 
 import (
 	"bufio"
+	"container/list"
 	"encoding/binary"
 	"errors"
 	"github.com/clearcodecn/cargo/codec"
 	"github.com/clearcodecn/cargo/packet"
+	"github.com/clearcodecn/cargo/proto"
 	"io"
 	"net"
 	"sync"
@@ -23,44 +25,37 @@ type ContextConfig struct {
 	AfterReadHandler  []OnIOHandler
 	AfterWriteHandler []OnIOHandler
 	codec             codec.Codec
-	Handlers          []HandlerFunc
 }
 
 type Context struct {
-	id   string
-	ip   string
-	port string
-
-	mu            sync.Mutex
-	createTime    int64
-	lastReadTime  int64
-	lastWriteTime int64
-	readCount     uint32
-	writeCount    uint32
-
-	value map[interface{}]interface{}
-
-	conn net.Conn
-	br   *bufio.Reader
-	bw   *bufio.Writer
-
-	writeChan chan *packet.Packet
-	readChan  chan *packet.Packet
-
-	done chan struct{}
-
+	node              *Node
+	id                string
+	ip                string
+	port              string
+	isServer          bool
+	mu                sync.Mutex
+	createTime        int64
+	lastReadTime      int64
+	lastWriteTime     int64
+	readCount         uint32
+	writeCount        uint32
+	value             map[interface{}]interface{}
+	conn              net.Conn
+	br                *bufio.Reader
+	bw                *bufio.Writer
+	writeChan         chan *packet.Packet
+	readChan          chan *packet.Packet
+	done              chan struct{}
 	AfterReadHandler  []OnIOHandler
 	AfterWriteHandler []OnIOHandler
 	Handlers          []HandlerFunc
+	state             uint32
+	codec             codec.Codec
 
-	state uint32
-
-	codec codec.Codec
+	stop bool
 }
 
-type HandlerFunc func(ctx *Context, packet *packet.Packet)
-
-func newContext(conn net.Conn, config *ContextConfig) *Context {
+func newContext(conn net.Conn, node *Node, config *ContextConfig) *Context {
 	ctx := new(Context)
 	ctx.readChan = make(chan *packet.Packet, config.readChannelSize)
 	ctx.writeChan = make(chan *packet.Packet, config.writeBufferSize)
@@ -70,6 +65,7 @@ func newContext(conn net.Conn, config *ContextConfig) *Context {
 	ctx.conn = conn
 	ctx.value = make(map[interface{}]interface{})
 	ctx.codec = config.codec
+	ctx.node = node
 
 	host, port, _ := net.SplitHostPort(conn.RemoteAddr().String())
 	ctx.ip = host
@@ -80,6 +76,7 @@ func newContext(conn net.Conn, config *ContextConfig) *Context {
 	ctx.lastWriteTime = time.Now().Unix()
 	ctx.AfterReadHandler = config.AfterReadHandler
 	ctx.AfterWriteHandler = config.AfterWriteHandler
+	ctx.isServer = node == nil
 
 	return ctx
 }
@@ -106,23 +103,24 @@ func (ctx *Context) readLoop() {
 		}
 		cmdType := binary.BigEndian.Uint16(command)
 		count += n
-		var body = make([]byte, l-cmdType)
+		var body = make([]byte, l-2)
 		n, err = io.ReadFull(ctx.br, body)
 		if err != nil {
+			ctxLogger.WithField("ip", ctx.ip).WithField("id", ctx.id).Warnf("read body failed")
 			return
 		}
 		count += n
 
 		p, err := packet.NewPacket(packet.Command(cmdType), body)
 		if err != nil {
-			// TODO:: invalid packet, log it.
+			ctxLogger.WithField("ip", ctx.ip).WithField("id", ctx.id).Warnf("invalid packet")
 			continue
 		}
 
 		select {
 		case <-ctx.done:
 			return
-		case ctx.writeChan <- p:
+		case ctx.readChan <- p:
 		}
 		if len(ctx.AfterReadHandler) != 0 {
 			for _, h := range ctx.AfterReadHandler {
@@ -154,8 +152,9 @@ func (ctx *Context) loop() {
 				ctx.Close()
 				return
 			case packet.CommandData:
-				for _, h := range ctx.Handlers {
-					h(ctx, p)
+				if err := ctx.handleMessage(p.Payload); err != nil {
+					ctx.Close()
+					return
 				}
 			}
 		case p, ok := <-ctx.writeChan:
@@ -164,10 +163,10 @@ func (ctx *Context) loop() {
 			}
 			cmd := p.Command
 			var cmdHeader = make([]byte, 2)
-			binary.BigEndian.PutUint16(cmdHeader, uint16(cmd))
-			var header = make([]byte, 2)
-			binary.BigEndian.PutUint16(header, uint16(2+len(p.Payload)))
 			var count int
+			var header = make([]byte, 2)
+			binary.BigEndian.PutUint16(cmdHeader, uint16(cmd))
+			binary.BigEndian.PutUint16(header, uint16(2+len(p.Payload)))
 			n, err := ctx.bw.Write(header)
 			if err != nil {
 				return
@@ -251,6 +250,10 @@ func (ctx *Context) Close() error {
 	return nil
 }
 
+func (ctx *Context) Stop() {
+	ctx.stop = true
+}
+
 func AfterRead(ctx *Context, packet2 *packet.Packet, n int) {
 	ctx.mu.Lock()
 	defer ctx.mu.Unlock()
@@ -265,4 +268,121 @@ func AfterWrite(ctx *Context, packet *packet.Packet, n int) {
 
 	ctx.writeCount += uint32(n)
 	ctx.lastWriteTime = time.Now().Unix()
+}
+
+func (ctx *Context) Write(packet *packet.Packet) error {
+	select {
+	case <-ctx.done:
+		return errors.New("connection closed")
+	case ctx.writeChan <- packet:
+	}
+	return nil
+}
+
+func (ctx *Context) WriteMessage(msg *proto.Message) error {
+	data, err := ctx.codec.Marshal(msg)
+	if err != nil {
+		return err
+	}
+	packet, err := packet.NewPacket(packet.CommandData, data)
+	if err != nil {
+		return err
+	}
+	ctx.Write(packet)
+	return nil
+}
+
+type contextSet struct {
+	collection map[string]*list.List
+	mu         sync.Mutex
+}
+
+func (c *contextSet) add(key string, ctx *Context) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.collection[key]; !ok {
+		c.collection[key] = list.New()
+	}
+	for e := c.collection[key].Front(); e != nil; e = e.Next() {
+		if e.Value.(*Context) == ctx {
+			return
+		}
+	}
+	c.collection[key].PushBack(ctx)
+}
+
+func (c *contextSet) remove(key string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	delete(c.collection, key)
+}
+
+func (c *contextSet) get(key string) ([]*Context, bool) {
+	var coll []*Context
+	var ok bool
+	c.mu.Lock()
+	l, ok := c.collection[key]
+	for e := l.Front(); e != nil; e = e.Next() {
+		coll = append(coll, e.Value.(*Context))
+	}
+	c.mu.Unlock()
+	return coll, ok
+}
+
+func (c *contextSet) removeContext(key string, ctx *Context) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if l, ok := c.collection[key]; ok {
+		for e := l.Front(); e != nil; e = e.Next() {
+			if e.Value.(*Context) == ctx {
+				l.Remove(e)
+				break
+			}
+		}
+		return true
+	}
+
+	return false
+}
+
+func (c *contextSet) clean() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.collection = make(map[string]*list.List)
+}
+
+func (c *contextSet) cleanClosed() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for key, v := range c.collection {
+		for e := v.Front(); e != nil; e = e.Next() {
+			ctx := e.Value.(*Context)
+			if ctx.IsClose() {
+				v.Remove(e)
+				continue
+			}
+		}
+		if v.Len() == 0 {
+			delete(c.collection, key)
+		}
+	}
+}
+
+func (c *contextSet) all() []*Context {
+	var coll []*Context
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for _, l := range c.collection {
+		for e := l.Front(); e != nil; e = e.Next() {
+			coll = append(coll, e.Value.(*Context))
+		}
+	}
+	return coll
+}
+
+func newContextSet() *contextSet {
+	cs := new(contextSet)
+	cs.collection = make(map[string]*list.List)
+	return cs
 }
