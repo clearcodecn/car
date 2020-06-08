@@ -1,12 +1,18 @@
-syntax="proto3";
+syntax = "proto3";
 
 option go_package = "proto";
 
-enum MsgType {
-  UnknownMsgType = 0 ;
+enum Cmd {
+  UnknownCmd = 0 ;
 }
 
-message Message {
-  MsgType type = 1;
-  bytes body = 2;
+message ClusterMessage {
+  string appId = 1;
+  Cmd cmd = 2;
+  int64 version = 3;
+  string body = 4;
+}
+
+service App {
+
 }

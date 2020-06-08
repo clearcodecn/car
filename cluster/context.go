@@ -120,8 +120,10 @@ func (ctx *Context) readLoop() {
 		select {
 		case <-ctx.done:
 			return
-		case ctx.readChan <- p:
+		default:
 		}
+		ctx.readChan <- p
+
 		if len(ctx.AfterReadHandler) != 0 {
 			for _, h := range ctx.AfterReadHandler {
 				h(ctx, p, count)
@@ -274,8 +276,9 @@ func (ctx *Context) Write(packet *packet.Packet) error {
 	select {
 	case <-ctx.done:
 		return errors.New("connection closed")
-	case ctx.writeChan <- packet:
+	default:
 	}
+	ctx.writeChan <- packet
 	return nil
 }
 

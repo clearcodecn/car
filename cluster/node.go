@@ -16,6 +16,10 @@ import (
 	"time"
 )
 
+var (
+	increaseId uint32 = 0
+)
+
 type Node struct {
 	Id string
 
@@ -143,6 +147,10 @@ func (n *Node) handleConnection(conn net.Conn) {
 		codec:             n.opt.Codec,
 	}
 	ctx := newContext(conn, n, config)
+	n.mu.Lock()
+	n.connections[atomic.AddUint32(&increaseId, 1)] = ctx
+	n.mu.Unlock()
+
 	defer ctx.Close()
 
 	go ctx.loop()
@@ -238,9 +246,21 @@ func (n *Node) cleanLoop() {
 	for {
 		select {
 		case <-n.done:
+			return
 		case <-tk.C:
 			n.ipManager.cleanClosed()
 			n.groupManager.cleanClosed()
+			n.cleanClosedConnections()
 		}
 	}
+}
+
+func (n *Node) cleanClosedConnections() {
+	n.mu.Lock()
+	for id, c := range n.connections {
+		if c.IsClose() {
+			delete(n.connections, id)
+		}
+	}
+	defer n.mu.Unlock()
 }
