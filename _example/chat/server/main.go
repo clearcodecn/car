@@ -1,7 +1,7 @@
 package main
 
 import (
-	"github.com/clearcodecn/cargo/old"
+	"github.com/clearcodecn/car/old"
 	"log"
 	"net"
 	"net/http"

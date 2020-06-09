@@ -1,15 +1,15 @@
 package main
 
 import (
-	"github.com/clearcodecn/cargo"
-	"github.com/clearcodecn/cargo/cluster"
-	"github.com/clearcodecn/cargo/proto"
+	"github.com/clearcodecn/car"
+	"github.com/clearcodecn/car/cluster"
+	"github.com/clearcodecn/car/proto"
 	"log"
 	"time"
 )
 
 func main() {
-	n := cargo.New(cargo.WithTimeout(time.Hour * 1))
+	n := car.New(car.WithTimeout(time.Hour * 1))
 	cluster.RegisterHandle(proto.Auth, func(ctx *cluster.Context, v *proto.Message) error {
 		return nil
 	})

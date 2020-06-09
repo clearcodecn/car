@@ -1,4 +1,4 @@
-module github.com/clearcodecn/cargo
+module github.com/clearcodecn/car
 
 go 1.14
 

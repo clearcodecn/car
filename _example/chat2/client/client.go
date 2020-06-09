@@ -2,8 +2,8 @@ package main
 
 import (
 	"fmt"
-	"github.com/clearcodecn/cargo"
-	"github.com/clearcodecn/cargo/proto"
+	"github.com/clearcodecn/car"
+	"github.com/clearcodecn/car/proto"
 	"github.com/gorilla/websocket"
 	"log"
 	"time"
@@ -17,11 +17,11 @@ func main() {
 		log.Fatal(err)
 	}
 
-	cargo.RegisterHandler("helloReply", new(proto.HelloReply), func(msg interface{}, agent *cargo.Agent) {
+	car.RegisterHandler("helloReply", new(proto.HelloReply), func(msg interface{}, agent *car.Agent) {
 		fmt.Println("111")
 		fmt.Printf(msg.(*proto.HelloReply).Hahaha)
 	})
-	ag := cargo.NewClient(conn)
+	ag := car.NewClient(conn)
 	ag.WriteMessage("helloRequest", &proto.HelloRequest{
 		Wocaonima: "cabi",
 	})

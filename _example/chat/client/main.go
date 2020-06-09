@@ -2,9 +2,9 @@ package main
 
 import (
 	"fmt"
-	"github.com/clearcodecn/cargo/cluster"
-	"github.com/clearcodecn/cargo/packet"
-	"github.com/clearcodecn/cargo/proto"
+	"github.com/clearcodecn/car/cluster"
+	"github.com/clearcodecn/car/packet"
+	"github.com/clearcodecn/car/proto"
 	"github.com/gorilla/websocket"
 	"log"
 	"time"

@@ -1,4 +1,4 @@
-package cargo
+package car
 
 import "encoding/json"
 

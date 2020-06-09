@@ -1,8 +1,8 @@
-package cargo
+package car
 
 import (
 	"bufio"
-	"github.com/clearcodecn/cargo/config"
+	"github.com/clearcodecn/car/config"
 	"github.com/gorilla/websocket"
 	"net"
 	"net/http"

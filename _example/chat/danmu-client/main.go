@@ -3,8 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/clearcodecn/cargo/cluster"
-	"github.com/clearcodecn/cargo/proto"
+	"github.com/clearcodecn/car/cluster"
+	"github.com/clearcodecn/car/proto"
 	"github.com/gorilla/websocket"
 	"log"
 	"math/rand"

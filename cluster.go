@@ -1,7 +1,7 @@
-package cargo
+package car
 
 import (
-	"github.com/clearcodecn/cargo/pkg/registry"
+	"github.com/clearcodecn/car/pkg/registry"
 	"sync"
 )
 

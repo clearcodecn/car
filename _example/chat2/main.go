@@ -1,13 +1,13 @@
 package main
 
 import (
-	"github.com/clearcodecn/cargo"
+	"github.com/clearcodecn/car"
 )
 
 type Server struct {
-	imServer *cargo.Server
+	imServer *car.Server
 
-	handlers []cargo.Handler
+	handlers []car.Handler
 }
 
 func main() {
