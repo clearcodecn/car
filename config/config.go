@@ -1,9 +1,10 @@
 package config
 
 var (
-	Ip    string
-	Port  string
-	Label string
+	Ip      string
+	Port    string
+	Label   string
+	Version = 1
 )
 
 func init() {

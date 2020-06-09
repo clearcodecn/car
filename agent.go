@@ -1,4 +1,4 @@
-package gogogo
+package cargo
 
 import (
 	"bytes"
@@ -7,6 +7,10 @@ import (
 	"github.com/gorilla/websocket"
 	"log"
 	"sync"
+)
+
+var (
+	ErrConnectionAlreadyClosed = errors.New("connection already closed")
 )
 
 type Agent struct {
@@ -26,7 +30,7 @@ type Agent struct {
 	onClose []func(agent *Agent)
 }
 
-func newAgent(conn *websocket.Conn) *Agent {
+func newAgent(conn *websocket.Conn, onClose ...func(agent *Agent)) *Agent {
 	ag := new(Agent)
 	ag.writeChan = make(chan []byte, 16)
 	ag.readChan = make(chan []byte, 1)
@@ -39,13 +43,14 @@ func newAgent(conn *websocket.Conn) *Agent {
 		for b := range ag.writeChan {
 			w, err := conn.NextWriter(websocket.BinaryMessage)
 			if err != nil {
-				log.Printf("write failed1: %s", err)
 				break
 			}
 			n, err := w.Write(b)
-			log.Printf("writing: %s, %v,%s", b, n, err)
 			if err != nil {
-				log.Printf("write failed2: %s", err)
+				break
+			}
+			err = w.Close()
+			if err != nil {
 				break
 			}
 			ag.mu.Lock()
@@ -84,7 +89,6 @@ func (ag *Agent) Run() {
 		if msg == nil {
 			continue
 		}
-
 		go func() {
 			if err := recover(); err != nil {
 				log.Println(err)
@@ -93,7 +97,6 @@ func (ag *Agent) Run() {
 				return
 			}
 			if !ag.MessageProcess.Route(string(method), msg, ag) {
-				log.Printf("invalid method:%s", method)
 				return
 			}
 		}()
@@ -120,7 +123,7 @@ func (ag *Agent) WriteMessage(event string, msg interface{}) error {
 	defer ag.mu.Unlock()
 
 	if ag.isClose {
-		return errors.New("connection closed")
+		return ErrConnectionAlreadyClosed
 	}
 	ag.writeChan <- w.Bytes()
 	return nil
@@ -131,7 +134,7 @@ func (ag *Agent) Close() error {
 	defer ag.mu.Unlock()
 
 	if ag.isClose {
-		return errors.New("agent already closed")
+		return ErrConnectionAlreadyClosed
 	}
 	ag.conn.Close()
 	ag.isClose = true
@@ -144,4 +147,20 @@ func (ag *Agent) Close() error {
 	}
 
 	return nil
+}
+
+func (ag *Agent) BindID(id string) error {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	if ag.isClose {
+		return ErrConnectionAlreadyClosed
+	}
+	ag.id = id
+	return nil
+}
+
+func (ag *Agent) ID() string {
+	ag.mu.Lock()
+	defer ag.mu.Unlock()
+	return ag.id
 }

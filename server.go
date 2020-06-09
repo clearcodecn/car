@@ -1,4 +1,4 @@
-package gogogo
+package cargo
 
 import (
 	"bufio"
@@ -7,15 +7,12 @@ import (
 	"net"
 	"net/http"
 	"sync"
+	"time"
 )
 
 type Server struct {
-	wg sync.WaitGroup
-
-	PushServer PushServer
-
-	opts Option
-
+	wg       sync.WaitGroup
+	opts     Option
 	upgrader websocket.Upgrader
 }
 
@@ -55,8 +52,29 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agent := newAgent(conn)
+	agent := newAgent(conn, func(agent *Agent) {
+		s.opts.PushServer.DelMember(agent)
+		s.opts.PushServer.DelGroupAgent(agent)
+	})
 	agent.Run()
 
 	agent.Close()
+}
+
+func NewServer(opts ...Options) *Server {
+	var option Option
+	for _, o := range opts {
+		o(&option)
+	}
+	s := new(Server)
+	s.opts = option
+	s.upgrader = websocket.Upgrader{
+		HandshakeTimeout:  30 * time.Second,
+		ReadBufferSize:    1024,
+		WriteBufferSize:   1024,
+		CheckOrigin:       option.CheckOrigin,
+		EnableCompression: false,
+	}
+
+	return s
 }

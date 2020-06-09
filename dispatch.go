@@ -1,4 +1,4 @@
-package gogogo
+package cargo
 
 import "encoding/json"
 
@@ -59,8 +59,8 @@ func (m *messageProcess) Route(method string, msg interface{}, agent *Agent) boo
 	return false
 }
 
-func RegisterMessageAndRouter(method string, cloneable MessageCloneable, handler MessageHandler) {
-	defaultMessageProcess.RegisterMessageAndRouter(method, cloneable, handler)
+func RegisterHandler(h Handler) {
+	defaultMessageProcess.RegisterMessageAndRouter(h.Route, h.Message, h.Handler)
 }
 
 type jsonCodec struct{}
@@ -71,4 +71,10 @@ func (j jsonCodec) Marshal(v interface{}) ([]byte, error) {
 
 func (j jsonCodec) UnMarshal(bytes []byte, i interface{}) error {
 	return json.Unmarshal(bytes, i)
+}
+
+type Handler struct {
+	Route   string
+	Message MessageCloneable
+	Handler MessageHandler
 }

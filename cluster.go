@@ -1,7 +1,7 @@
-package gogogo
+package cargo
 
 import (
-	"github.com/clearcodecn/cargo/gogogo/pkg/registry"
+	"github.com/clearcodecn/cargo/pkg/registry"
 	"sync"
 )
 

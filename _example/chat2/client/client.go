@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/clearcodecn/cargo/gogogo"
+	"github.com/clearcodecn/cargo"
 	"github.com/clearcodecn/cargo/proto"
 	"github.com/gorilla/websocket"
 	"log"
@@ -17,14 +17,13 @@ func main() {
 		log.Fatal(err)
 	}
 
-	gogogo.RegisterMessageAndRouter("helloReply", new(proto.HelloRequest), func(msg interface{}, agent *gogogo.Agent) {
+	cargo.RegisterHandler("helloReply", new(proto.HelloReply), func(msg interface{}, agent *cargo.Agent) {
 		fmt.Println("111")
 		fmt.Printf(msg.(*proto.HelloReply).Hahaha)
 	})
-	ag := gogogo.NewClient(conn)
+	ag := cargo.NewClient(conn)
 	ag.WriteMessage("helloRequest", &proto.HelloRequest{
 		Wocaonima: "cabi",
 	})
-
 	time.Sleep(10 * time.Second)
 }

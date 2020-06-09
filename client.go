@@ -1,4 +1,4 @@
-package gogogo
+package cargo
 
 import "github.com/gorilla/websocket"
 
